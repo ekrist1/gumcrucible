@@ -3,6 +3,9 @@
 # Prefers official installer when PHP CLI is available; otherwise, instructs to install PHP first.
 set -euo pipefail
 
+# Set component name for logging
+export CRUCIBLE_COMPONENT="composer"
+
 PROGRESS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/progress.sh"
 [[ -f "$PROGRESS_LIB" ]] && source "$PROGRESS_LIB"
 
@@ -12,6 +15,7 @@ if ! command -v gum >/dev/null 2>&1; then
 fi
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
+need_sudo() { if [[ $EUID -ne 0 ]]; then command_exists sudo && echo sudo; fi; }
 
 if [[ -r /etc/os-release ]]; then
   # shellcheck disable=SC1091
@@ -35,7 +39,9 @@ install_via_official() {
   pushd "$tmpdir" >/dev/null
   gum spin --spinner line --title "Downloading composer installer" -- bash -c "php -r 'copy(\"https://getcomposer.org/installer\", \"composer-setup.php\");' >/dev/null 2>&1"
   gum spin --spinner line --title "Verifying installer signature" -- bash -c "php -r 'copy(\"https://composer.github.io/installer.sig\", \"composer-setup.sig\"); $sig=file_get_contents(\"composer-setup.sig\"); $hash=hash_file(\"sha384\", \"composer-setup.php\"); if(trim($sig)!==$hash){fwrite(STDERR, \"Signature mismatch\\n\"); exit(1);}';"
-  gum spin --spinner line --title "Installing composer to /usr/local/bin" -- bash -c "php composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null 2>&1"
+  local sudo_cmd
+  sudo_cmd=$(need_sudo || true)
+  gum spin --spinner line --title "Installing composer to /usr/local/bin" -- bash -c "${sudo_cmd:-} php composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null 2>&1"
   gum spin --spinner line --title "Cleaning up" -- bash -c "rm -f composer-setup.php composer-setup.sig >/dev/null 2>&1"
   popd >/dev/null
   rm -rf "$tmpdir"
@@ -50,10 +56,12 @@ install_via_pkg() {
       pb_packages "Installing Composer (dnf)" composer
     fi
   else
+    local sudo_cmd
+    sudo_cmd=$(need_sudo || true)
     if command -v apt-get >/dev/null 2>&1; then
-      gum spin --spinner line --title "Installing Composer (apt)" -- bash -c 'apt-get update -y >/dev/null 2>&1; apt-get install -y composer >/dev/null 2>&1'
+      gum spin --spinner line --title "Installing Composer (apt)" -- bash -c "${sudo_cmd:-} apt-get update -y >/dev/null 2>&1; ${sudo_cmd:-} apt-get install -y composer >/dev/null 2>&1"
     elif command -v dnf >/dev/null 2>&1; then
-      gum spin --spinner line --title "Installing Composer (dnf)" -- bash -c 'dnf install -y composer >/dev/null 2>&1'
+      gum spin --spinner line --title "Installing Composer (dnf)" -- bash -c "${sudo_cmd:-} dnf install -y composer >/dev/null 2>&1"
     fi
   fi
 }
@@ -75,10 +83,41 @@ main() {
 
   if already_installed; then
     composer --version 2>/dev/null | head -n1 | xargs -I{} gum style --foreground 212 --bold {}
+    
+    # Run health check
+    run_composer_health_check
   else
     gum style --foreground 196 "Composer installation did not complete."
     exit 2
   fi
+}
+
+run_composer_health_check() {
+  if ! declare -f health_check_summary >/dev/null 2>&1; then
+    log_warn "Health check functions not available, skipping validation"
+    return 0
+  fi
+  
+  local checks=(
+    "validate_command composer '[0-9]+\\.[0-9]+'"
+    "validate_command php 'PHP [0-9]+'"
+  )
+  
+  # Check if composer can access repositories (if internet is available)
+  if ping -c 1 packagist.org >/dev/null 2>&1; then
+    checks+=("composer diagnose --no-interaction >/dev/null 2>&1 || echo 'Composer diagnose (optional)'")
+    checks+=("composer show -p 2>/dev/null | grep -q 'php' || echo 'Packagist connectivity (optional)'")
+  fi
+  
+  # Check composer global directory exists
+  checks+=("test -d \$(composer config --global home 2>/dev/null) || echo 'Composer global directory'"")
+  
+  # Verify composer can create basic composer.json
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  checks+=("cd '$tmpdir' && composer init --no-interaction --name=test/test --quiet >/dev/null 2>&1 && rm -rf '$tmpdir' || echo 'Composer init test (optional)'")
+  
+  health_check_summary "Composer" "${checks[@]}"
 }
 
 main "$@"

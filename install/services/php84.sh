@@ -4,6 +4,9 @@
 # Safe to re-run (idempotent-ish)
 set -euo pipefail
 
+# Set component name for logging
+export CRUCIBLE_COMPONENT="php84"
+
 PROGRESS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/progress.sh"
 if [[ -f "$PROGRESS_LIB" ]]; then
   # shellcheck disable=SC1090
@@ -25,7 +28,7 @@ if [[ -r /etc/os-release ]]; then
   DIST_LIKE="${ID_LIKE:-}"; DIST_LIKE="${DIST_LIKE,,}"
   DIST_VERSION_ID="${VERSION_ID:-}";
 else
-  echo "[php84][error] Cannot detect OS (missing /etc/os-release)" >&2
+  gum style --foreground 196 "[php84][error] Cannot detect OS (missing /etc/os-release)"
   exit 1
 fi
 
@@ -82,6 +85,15 @@ configure_php_ini() {
   local ini_file="$1"
   local timezone="$2"
   [[ -f "$ini_file" ]] || return 0
+  
+  # Backup the original ini file if backup function is available
+  if declare -f backup_file >/dev/null 2>&1; then
+    backup_file "$ini_file" || gum style --foreground 214 "Warning: Could not backup $ini_file"
+  fi
+  
+  local sudo_cmd
+  sudo_cmd=$(need_sudo || true)
+  
   local -A settings=(
     [memory_limit]="512M"
     [upload_max_filesize]="64M"
@@ -89,40 +101,77 @@ configure_php_ini() {
     [max_execution_time]="120"
     [date.timezone]="$timezone"
   )
+  
   for key in "${!settings[@]}"; do
     if grep -qE "^;?${key}\s*=" "$ini_file"; then
-      sed -i "s|^;\?${key}\s*=.*|${key} = ${settings[$key]}|" "$ini_file"
+      ${sudo_cmd:-} sed -i "s|^;\?${key}\s*=.*|${key} = ${settings[$key]}|" "$ini_file"
     else
-      echo "${key} = ${settings[$key]}" >>"$ini_file"
+      echo "${key} = ${settings[$key]}" | ${sudo_cmd:-} tee -a "$ini_file" >/dev/null
     fi
   done
 }
 
 install_ubuntu() {
-  gum spin --spinner line --title "Adding Sury repo" -- bash -c '
-    apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y ca-certificates curl gnupg lsb-release >/dev/null 2>&1
-    install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://packages.sury.org/php/apt.gpg -o /etc/apt/keyrings/sury.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/sury.gpg] https://packages.sury.org/php/ $(. /etc/os-release && echo $VERSION_CODENAME) main" >/etc/apt/sources.list.d/sury-php.list
-    apt-get update -y >/dev/null 2>&1
-  '
+  local sudo_cmd
+  sudo_cmd=$(need_sudo || true)
+  
+  gum spin --spinner line --title "Adding Sury repo" -- bash -c "
+    ${sudo_cmd:-} apt-get update -y >/dev/null 2>&1 || true
+    ${sudo_cmd:-} apt-get install -y ca-certificates curl gnupg lsb-release >/dev/null 2>&1
+    ${sudo_cmd:-} install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://packages.sury.org/php/apt.gpg | ${sudo_cmd:-} tee /etc/apt/keyrings/sury.gpg >/dev/null
+    echo \"deb [signed-by=/etc/apt/keyrings/sury.gpg] https://packages.sury.org/php/ \$(. /etc/os-release && echo \$VERSION_CODENAME) main\" | ${sudo_cmd:-} tee /etc/apt/sources.list.d/sury-php.list >/dev/null
+    ${sudo_cmd:-} apt-get update -y >/dev/null 2>&1
+  "
+  
   if declare -f pb_packages >/dev/null 2>&1; then
     pb_packages "Installing PHP ${PHP_TARGET_MAJOR}" php${PHP_TARGET_MAJOR} "${UBUNTU_PACKAGES[@]}"
   else
-    gum spin --spinner line --title "Installing PHP ${PHP_TARGET_MAJOR}" -- bash -c "apt-get install -y php${PHP_TARGET_MAJOR} ${UBUNTU_PACKAGES[*]} >/dev/null 2>&1"
+    gum spin --spinner line --title "Installing PHP ${PHP_TARGET_MAJOR}" -- bash -c "${sudo_cmd:-} apt-get install -y php${PHP_TARGET_MAJOR} ${UBUNTU_PACKAGES[*]} >/dev/null 2>&1"
   fi
 }
 
 install_fedora() {
+  local sudo_cmd
+  sudo_cmd=$(need_sudo || true)
+  
   local relpkg="https://rpms.remirepo.net/fedora/remi-release-${DIST_VERSION_ID}.rpm"
-  gum spin --spinner line --title "Adding Remi repo" -- bash -c "dnf install -y ${relpkg} >/dev/null 2>&1 || true"
-  gum spin --spinner line --title "Enabling PHP ${PHP_TARGET_MAJOR} module" -- bash -c 'dnf -y module reset php >/dev/null 2>&1; dnf -y module enable php:remi-8.4 >/dev/null 2>&1'
+  gum spin --spinner line --title "Adding Remi repo" -- bash -c "${sudo_cmd:-} dnf install -y ${relpkg} >/dev/null 2>&1 || true"
+  gum spin --spinner line --title "Enabling PHP ${PHP_TARGET_MAJOR} module" -- bash -c "${sudo_cmd:-} dnf -y module reset php >/dev/null 2>&1; ${sudo_cmd:-} dnf -y module enable php:remi-8.4 >/dev/null 2>&1"
+  
   if declare -f pb_packages >/dev/null 2>&1; then
     pb_packages "Installing PHP ${PHP_TARGET_MAJOR}" "${FEDORA_PACKAGES[@]}"
   else
-    gum spin --spinner line --title "Installing PHP ${PHP_TARGET_MAJOR}" -- bash -c "dnf install -y ${FEDORA_PACKAGES[*]} >/dev/null 2>&1"
+    gum spin --spinner line --title "Installing PHP ${PHP_TARGET_MAJOR}" -- bash -c "${sudo_cmd:-} dnf install -y ${FEDORA_PACKAGES[*]} >/dev/null 2>&1"
   fi
+}
+
+run_php_health_check() {
+  if ! declare -f health_check_summary >/dev/null 2>&1; then
+    log_warn "Health check functions not available, skipping validation"
+    return 0
+  fi
+  
+  local checks=(
+    "validate_command php '8\\.4'"
+    "validate_command php-fpm '8\\.4'"
+  )
+  
+  # Add service checks if systemd is available
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q php-fpm; then
+    checks+=(
+      "validate_service_enabled php-fpm"
+      "validate_service_running php-fpm"
+    )
+  fi
+  
+  # Check for essential PHP extensions
+  local essential_exts=(mbstring xml curl json)
+  for ext in "${essential_exts[@]}"; do
+    checks+=("php -m | grep -q '^$ext$'")
+  done
+  
+  health_check_summary "PHP ${PHP_TARGET_MAJOR}" "${checks[@]}"
 }
 
 main() {
@@ -148,17 +197,23 @@ main() {
   local tz
   tz=$(choose_timezone)
   # Attempt common ini locations
+  local sudo_cmd
+  sudo_cmd=$(need_sudo || true)
+  
   for ini in /etc/php/${PHP_TARGET_MAJOR}/fpm/php.ini /etc/php/${PHP_TARGET_MAJOR}/cli/php.ini /etc/php.ini; do
     [[ -f $ini ]] && configure_php_ini "$ini" "$tz"
   done
 
   # Enable and start php-fpm service where applicable
   if systemctl list-unit-files | grep -q php-fpm; then
-    gum spin --spinner line --title "Enabling php-fpm" -- bash -c 'systemctl enable php-fpm >/dev/null 2>&1 || true'
-    gum spin --spinner line --title "Starting php-fpm" -- bash -c 'systemctl restart php-fpm >/dev/null 2>&1 || true'
+    gum spin --spinner line --title "Enabling php-fpm" -- bash -c "${sudo_cmd:-} systemctl enable php-fpm >/dev/null 2>&1 || true"
+    gum spin --spinner line --title "Starting php-fpm" -- bash -c "${sudo_cmd:-} systemctl restart php-fpm >/dev/null 2>&1 || true"
   fi
 
   gum style --foreground 212 --bold "PHP $(php -v | head -n1 | awk '{print $2}') installed"
+  
+  # Run health check
+  run_php_health_check
 }
 
 main "$@"

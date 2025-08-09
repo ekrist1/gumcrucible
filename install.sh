@@ -29,11 +29,6 @@ trap 'echo "[crucible][error] Failed on line $LINENO. See $LOG_FILE" >&2' ERR
 # --- end new ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROGRESS_LIB="${SCRIPT_DIR}/install/lib/progress.sh"
-if [[ -f "$PROGRESS_LIB" ]]; then
-  # shellcheck disable=SC1090
-  source "$PROGRESS_LIB"
-fi
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -233,13 +228,23 @@ make_executable() {
 
 # --- changed: resolve startup.sh location, fetching repo when needed ---
 STARTUP=""
+INSTALL_BASE=""
 if [[ -f "${SCRIPT_DIR}/startup.sh" ]]; then
   STARTUP="${SCRIPT_DIR}/startup.sh"
+  INSTALL_BASE="${SCRIPT_DIR}"
 else
   echo "[crucible] Local startup.sh not found next to installer. Fetching repository..."
   download_repo
   make_executable
   STARTUP="${TARGET_DIR}/startup.sh"
+  INSTALL_BASE="${TARGET_DIR}"
+fi
+
+# Source progress library now that we know where the install scripts are
+PROGRESS_LIB="${INSTALL_BASE}/install/lib/progress.sh"
+if [[ -f "$PROGRESS_LIB" ]]; then
+  # shellcheck disable=SC1090
+  source "$PROGRESS_LIB"
 fi
 
 echo "[crucible] Launching startup menu: $STARTUP"

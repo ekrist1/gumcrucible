@@ -28,8 +28,15 @@ has_caddy() { command_exists caddy; }
 has_composer() { command_exists composer; }
 has_docker() { command_exists docker; }
 has_mysql() {
-  if command_exists mysql; then return 0; fi
-  if command_exists systemctl && systemctl list-unit-files | grep -qE '^(mysql|mysqld|mariadb)\.service'; then return 0; fi
+  # Check for mysql/mariadb client
+  if command_exists mysql || command_exists mariadb; then return 0; fi
+  # Check for running services
+  if command_exists systemctl; then
+    if systemctl list-unit-files 2>/dev/null | grep -qE '^(mysql|mysqld|mariadb)\.service'; then return 0; fi
+    if systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null; then return 0; fi
+  fi
+  # Check for common server binaries
+  if command_exists mysqld || command_exists mariadbd; then return 0; fi
   return 1
 }
 
