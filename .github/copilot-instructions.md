@@ -29,13 +29,58 @@ Crucible is opinionated, meaning it enforces certain conventions and best practi
 - The script must support both Ubuntu and Fedora distributions, ensuring compatibility across different environments.
 - The scripts should handle errors gracefully and provide meaningful feedback to the user. Prefer using `gum style` for error messages. Log all errors to a file for later analysis. Use a custom error handling function
 
+## Entry Points
+- `install.sh`: Main installer that sets up gum, clones repository, and launches startup menu
+- `startup.sh`: Interactive main menu using gum for service selection
+
 ## Folder structure
 
-The install folder contains the main installation scripts and configuration files for Crucible.
+```
+install/
+├── lib/progress.sh          # Reusable progress bar utilities
+├── coreservice.sh          # Orchestrates core services (PHP, Caddy, MySQL, Docker)
+├── framework.sh            # Framework setup (Laravel, Next.js)
+├── services/               # Individual service installers
+│   ├── php84.sh
+│   ├── caddy.sh
+│   ├── composer.sh
+│   └── docker.sh
+├── frameworks/             # Framework-specific configurations
+│   └── caddy_laravel.sh
+└── operation/              # Management and orchestration scripts
+    └── docker.sh
+```
 
-The config folder contains templates and configuration files for various software packages supported by Crucible.
+## Development Guidelines
 
-The operation folder contains scripts for managing and orchestrating the core services.
+### Error Handling
+- Use `set -euo pipefail` in all scripts
+- Provide meaningful error messages with `gum style --foreground 196`
+- Log errors to files for analysis (see install.sh error handling pattern)
+- Use trap for cleanup on script failure
+
+### Progress Display
+- Source `install/lib/progress.sh` for multi-step operations
+- Use `pb_packages` for batch package installations
+- Guard with `declare -f pb_packages` checks for fallback compatibility
+- Use `gum spin` for single operations, progress bars for batches
+
+### Cross-Distribution Support
+- Detect OS via `/etc/os-release`
+- Support both apt-get (Ubuntu/Debian) and dnf (Fedora/RHEL)
+- Test package manager availability before use
+- Handle ID_LIKE for derivative distributions
+
+### Service Detection
+- Implement detection functions (e.g., `has_php84()`, `has_caddy()`) 
+- Display dynamic checkmarks in menus: `[x]` for installed, `[ ]` for missing
+- Check both command availability and version requirements
+
+### Menu Design
+- Use `gum choose` for interactive selection
+- Provide clear service status indicators
+- Include "Back" and "Cancel" options
+- Allow returning to main menu with confirmation prompts
 
 ## Progress Bar Utilities
 
@@ -58,8 +103,3 @@ else
 	apt-get install -y curl wget git
 fi
 ```
-
-Guidelines:
-* Always guard usage with `declare -f` so scripts work even if the library is missing.
-* Keep package operations quiet (`>/dev/null 2>&1`) when wrapped by progress bar to avoid flicker.
-* Prefer using the bar for batches larger than one package; use gum spinners for single quick tasks.

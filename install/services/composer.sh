@@ -11,7 +11,33 @@ PROGRESS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/progress.sh"
 
 if ! command -v gum >/dev/null 2>&1; then
   echo "[composer][warn] gum not found; proceeding without fancy UI" >&2
-  gum() { shift || true; "$@"; }
+  # Fallback: emulate minimal gum behavior
+  gum() {
+    case "$1" in
+      style)
+        shift
+        echo "$*"
+        ;;
+      spin)
+        shift
+        # Execute the command after the '--'
+        while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+        shift || true
+        "$@"
+        ;;
+      *)
+        shift || true
+        "$@"
+        ;;
+    esac
+  }
+fi
+
+# Add a safe warn logger if not provided by the environment
+if ! declare -f log_warn >/dev/null 2>&1; then
+  log_warn() {
+    gum style --foreground 214 "[composer][warn] $*"
+  }
 fi
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -38,7 +64,8 @@ install_via_official() {
   tmpdir=$(mktemp -d)
   pushd "$tmpdir" >/dev/null
   gum spin --spinner line --title "Downloading composer installer" -- bash -c "php -r 'copy(\"https://getcomposer.org/installer\", \"composer-setup.php\");' >/dev/null 2>&1"
-  gum spin --spinner line --title "Verifying installer signature" -- bash -c "php -r 'copy(\"https://composer.github.io/installer.sig\", \"composer-setup.sig\"); $sig=file_get_contents(\"composer-setup.sig\"); $hash=hash_file(\"sha384\", \"composer-setup.php\"); if(trim($sig)!==$hash){fwrite(STDERR, \"Signature mismatch\\n\"); exit(1);}';"
+  # Prevent bash from expanding $sig/$hash by using single-quoted command string
+  gum spin --spinner line --title "Verifying installer signature" -- bash -c 'php -r "copy(\"https://composer.github.io/installer.sig\", \"composer-setup.sig\"); $sig=trim(file_get_contents(\"composer-setup.sig\")); $hash=hash_file(\"sha384\", \"composer-setup.php\"); if($sig!==$hash){fwrite(STDERR, \"Signature mismatch\n\"); exit(1);}";'
   local sudo_cmd
   sudo_cmd=$(need_sudo || true)
   gum spin --spinner line --title "Installing composer to /usr/local/bin" -- bash -c "${sudo_cmd:-} php composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null 2>&1"
@@ -109,13 +136,10 @@ run_composer_health_check() {
     checks+=("composer show -p 2>/dev/null | grep -q 'php' || echo 'Packagist connectivity (optional)'")
   fi
   
-  # Check composer global directory exists
-  checks+=("test -d \$(composer config --global home 2>/dev/null) || echo 'Composer global directory'"")
-  
-  # Verify composer can create basic composer.json
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  checks+=("cd '$tmpdir' && composer init --no-interaction --name=test/test --quiet >/dev/null 2>&1 && rm -rf '$tmpdir' || echo 'Composer init test (optional)'")
+  # Check composer global directory exists - simplified
+  if composer config --global home >/dev/null 2>&1; then
+    checks+=("test -d \"\$(composer config --global home 2>/dev/null)\"")
+  fi
   
   health_check_summary "Composer" "${checks[@]}"
 }

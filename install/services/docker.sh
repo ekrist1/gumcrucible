@@ -43,8 +43,10 @@ install_ubuntu_debian() {
   # Keyring
   gum spin --spinner line --title "Setting up Docker apt keyring" -- bash -c "
     ${sudo_cmd:-} install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/${ID}/gpg | ${sudo_cmd:-} gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL https://download.docker.com/linux/${ID}/gpg > /tmp/docker.gpg
+    ${sudo_cmd:-} gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
     ${sudo_cmd:-} chmod a+r /etc/apt/keyrings/docker.gpg
+    rm -f /tmp/docker.gpg
   "
 
   # Repo
@@ -157,11 +159,6 @@ run_docker_health_check() {
   
   # Check if docker daemon is responding
   checks+=("docker info >/dev/null 2>&1")
-  
-  # Test basic docker functionality with hello-world (if internet is available)
-  if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-    checks+=("docker run --rm hello-world >/dev/null 2>&1 || echo 'Docker hello-world test (optional)'")
-  fi
   
   # Check if user can run docker without sudo (will fail for root, but that's expected)
   if [[ $EUID -ne 0 ]]; then

@@ -32,7 +32,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+# new: global sudo/runner helpers (needed even if gum is already installed)
+need_sudo() {
+  if [[ $EUID -ne 0 ]]; then
+    if command_exists sudo; then
+      echo sudo "$@"
+    else
+      echo "$@"
+    fi
+  else
+    echo "$@"
+  fi
+}
+run() {
+  local cmd
+  cmd=$(need_sudo "$@")
+  echo "> $cmd"
+  eval "$cmd"
+}
+
 echo "[crucible] Starting install script"
+echo "[crucible] Logging errors to $LOG_FILE"
 
 # --- changed: don't exit early if gum exists; continue to repo setup ---
 if command_exists gum; then
@@ -48,10 +68,9 @@ confirm_install() {
   if [[ -t 0 ]]; then
     read -r -p "$prompt" reply
   else
-    # Attempt reading from /dev/tty; if not available, abort
+    # changed: do not reassign stdin globally; read from /dev/tty for this prompt only
     if [[ -r /dev/tty ]]; then
-      exec < /dev/tty
-      read -r -p "$prompt" reply
+      read -r -p "$prompt" reply </dev/tty
     else
       echo "[crucible] Non-interactive session detected; refusing to install gum without confirmation." >&2
       return 1
@@ -80,28 +99,10 @@ if ! command_exists gum; then
   ID_LIKE_LOWER="${ID_LIKE:-}"; ID_LIKE_LOWER="${ID_LIKE_LOWER,,}"
   ID_LOWER="${ID,,}"
 
-  need_sudo() {
-    if [[ $EUID -ne 0 ]]; then
-      if command_exists sudo; then
-        echo sudo "$@"
-      else
-        echo "$@"
-      fi
-    else
-      echo "$@"
-    fi
-  }
-
-  run() {
-    local cmd
-    cmd=$(need_sudo "$@")
-    echo "> $cmd"
-    eval "$cmd"
-  }
-
   install_gum_ubuntu() {
     echo "[crucible] Installing gum for Ubuntu/Debian..."
-    run apt-get update -y
+    # changed: avoid '-y' with 'apt-get update'
+    run apt-get update
     local base_packages=(curl ca-certificates gnupg lsb-release)
     if declare -f pb_packages >/dev/null 2>&1; then
       pb_packages "Installing prerequisites" "${base_packages[@]}"
@@ -109,7 +110,8 @@ if ! command_exists gum; then
       run apt-get install -y "${base_packages[@]}"
     fi
     echo "deb [trusted=yes] https://repo.charm.sh/apt/ * *" | $(need_sudo tee /etc/apt/sources.list.d/charm.list) >/dev/null
-    run apt-get update -y
+    # changed: avoid '-y' with 'apt-get update'
+    run apt-get update
     if declare -f pb_packages >/dev/null 2>&1; then
       pb_packages "Installing gum" gum
     else
@@ -135,7 +137,7 @@ EOF
 [charm]
 name=Charm Repo
 baseurl=https://repo.charm.sh/yum/
-enabled=1
+enabled=1Q
 gpgcheck=0
 EOF
       fi
@@ -149,9 +151,10 @@ EOF
       run dnf install -y gum || {
         echo "[crucible][warn] direct install failed, attempting plugin path" >&2
         run dnf install -y dnf-plugins-core || true
-        if dnf config-manager --help >/dev/null 2>&1; then
-          dnf config-manager --add-repo https://repo.charm.sh/yum/ 2>/dev/null || \
-          dnf config-manager addrepo https://repo.charm.sh/yum/ charm || true
+        # changed: use 'run' for config-manager so sudo is applied
+        if run dnf config-manager --help >/dev/null 2>&1; then
+          run dnf config-manager --add-repo https://repo.charm.sh/yum/ 2>/dev/null || \
+          run dnf config-manager addrepo https://repo.charm.sh/yum/ charm || true
           run dnf install -y gum
         fi
       }
@@ -191,7 +194,8 @@ ensure_git() {
   if command_exists git; then return 0; fi
   echo "[crucible] git not found. Attempting to install..."
   if command_exists apt-get; then
-    run apt-get update -y || true
+    # changed: avoid '-y' with 'apt-get update'
+    run apt-get update || true
     run apt-get install -y git curl ca-certificates
   elif command_exists dnf; then
     run dnf install -y git curl ca-certificates
@@ -248,5 +252,24 @@ if [[ -f "$PROGRESS_LIB" ]]; then
 fi
 
 echo "[crucible] Launching startup menu: $STARTUP"
+
+# Verify startup script exists and is executable
+if [[ ! -f "$STARTUP" ]]; then
+  echo "[crucible][error] Startup script not found: $STARTUP" >&2
+  exit 4
+fi
+
+if [[ ! -x "$STARTUP" ]]; then
+  echo "[crucible] Making startup script executable: $STARTUP"
+  chmod +x "$STARTUP"
+fi
+
+# Change to the repository directory before executing startup.sh
+cd "$INSTALL_BASE" || {
+  echo "[crucible][error] Cannot change to directory: $INSTALL_BASE" >&2
+  exit 5
+}
+
+echo "[crucible] Executing startup script from directory: $(pwd)"
 exec "$STARTUP" "$@"
 # --- end changed ---
