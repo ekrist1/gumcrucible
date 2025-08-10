@@ -28,88 +28,111 @@ BRANCH="main"
 FORCE_INSTALL=false
 UPDATE_EXISTING=false
 
-show_help() {
-  cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
+# Interactive user input using gum
+get_user_input() {
+  clear || true
+  gum style --foreground 45 --bold "Laravel + Nginx Application Setup"
+  gum style --faint "This will create a new Laravel application with Nginx configuration"
+  echo
 
-Install Laravel application with Nginx configuration
-
-REQUIREMENTS:
-    • Nginx must be installed on the system
-    • PHP 8.2+ with FPM must be available
-    • Composer must be installed
-
-OPTIONS:
-    -n, --name NAME         Laravel project name (required for new projects)
-    -d, --domain DOMAIN     Domain name for Nginx virtual host (required)
-    -p, --path PATH         Installation path (default: /var/www/DOMAIN)
-    -r, --repository URL    Git repository URL to clone
-    -b, --branch BRANCH     Git branch to use (default: main)
-    -f, --force             Force installation even if directory exists
-    -u, --update            Update existing installation
-    -h, --help              Show this help message
-
-EXAMPLES:
-    # Create new Laravel project
-    $(basename "$0") --name myapp --domain example.com
-
-    # Clone from repository
-    $(basename "$0") --repository https://github.com/user/laravel-app.git --domain example.com
-
-    # Update existing installation
-    $(basename "$0") --domain example.com --update
-
-    # Custom installation path
-    $(basename "$0") --name myapp --domain app.example.com --path /opt/laravel/myapp
-
-IMPORTANT:
-    After installation, ensure your domain points to this server's IP address!
-
-EOF
-}
-
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -n|--name)
-      PROJECT_NAME="$2"
-      shift 2
-      ;;
-    -d|--domain)
-      DOMAIN="$2"
-      shift 2
-      ;;
-    -p|--path)
-      PROJECT_PATH="$2"
-      shift 2
-      ;;
-    -r|--repository)
-      REPOSITORY="$2"
-      shift 2
-      ;;
-    -b|--branch)
-      BRANCH="$2"
-      shift 2
-      ;;
-    -f|--force)
-      FORCE_INSTALL=true
-      shift
-      ;;
-    -u|--update)
-      UPDATE_EXISTING=true
-      shift
-      ;;
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    *)
-      echo "Unknown option: $1" >&2
-      echo "Use --help for usage information" >&2
-      exit 1
-      ;;
+  # Installation type selection
+  local install_type
+  install_type=$(gum choose --header "What would you like to do?" \
+    "Create new Laravel project" \
+    "Clone from Git repository" \
+    "Update existing application" \
+    "Cancel") || exit 0
+  
+  case "$install_type" in
+    "Cancel") exit 0 ;;
+    "Update existing application") UPDATE_EXISTING=true ;;
+    "Clone from Git repository") ;;
+    "Create new Laravel project") ;;
   esac
-done
+
+  # Get domain (required for all types)
+  while [[ -z "$DOMAIN" ]]; do
+    DOMAIN=$(gum input --placeholder "Enter domain name (e.g. example.com)" --prompt "Domain: ") || exit 0
+    if [[ -z "$DOMAIN" ]]; then
+      gum style --foreground 196 "Domain is required!"
+      echo
+    fi
+  done
+
+  if [[ "$UPDATE_EXISTING" == "true" ]]; then
+    # For updates, try to auto-detect project path
+    local default_path="/var/www/$DOMAIN"
+    PROJECT_PATH=$(gum input --placeholder "$default_path" --prompt "Project Path: " --value "$default_path") || exit 0
+    if [[ -z "$PROJECT_PATH" ]]; then
+      PROJECT_PATH="$default_path"
+    fi
+  elif [[ "$install_type" == "Clone from Git repository" ]]; then
+    # Get repository URL
+    while [[ -z "$REPOSITORY" ]]; do
+      REPOSITORY=$(gum input --placeholder "https://github.com/user/repository.git" --prompt "Repository URL: ") || exit 0
+      if [[ -z "$REPOSITORY" ]]; then
+        gum style --foreground 196 "Repository URL is required!"
+        echo
+      fi
+    done
+    
+    # Get branch (optional)
+    BRANCH=$(gum input --placeholder "main" --prompt "Branch (optional): " --value "main") || exit 0
+    if [[ -z "$BRANCH" ]]; then
+      BRANCH="main"
+    fi
+    
+    # Get project path (optional)
+    local default_path="/var/www/$DOMAIN"
+    PROJECT_PATH=$(gum input --placeholder "$default_path" --prompt "Installation path (optional): " --value "$default_path") || exit 0
+    if [[ -z "$PROJECT_PATH" ]]; then
+      PROJECT_PATH="$default_path"
+    fi
+  else
+    # New Laravel project
+    while [[ -z "$PROJECT_NAME" ]]; do
+      PROJECT_NAME=$(gum input --placeholder "myapp" --prompt "Project Name: ") || exit 0
+      if [[ -z "$PROJECT_NAME" ]]; then
+        gum style --foreground 196 "Project name is required!"
+        echo
+      fi
+    done
+    
+    # Get project path (optional)
+    local default_path="/var/www/$DOMAIN"
+    PROJECT_PATH=$(gum input --placeholder "$default_path" --prompt "Installation path (optional): " --value "$default_path") || exit 0
+    if [[ -z "$PROJECT_PATH" ]]; then
+      PROJECT_PATH="$default_path"
+    fi
+  fi
+
+  # Advanced options
+  echo
+  if gum confirm "Configure advanced options?"; then
+    if [[ -d "$PROJECT_PATH" ]] && [[ "$UPDATE_EXISTING" == "false" ]]; then
+      if gum confirm "Directory $PROJECT_PATH already exists. Force overwrite?"; then
+        FORCE_INSTALL=true
+      fi
+    fi
+  fi
+
+  # Summary
+  echo
+  gum style --foreground 82 --bold "Configuration Summary:"
+  gum style --faint "Domain: $DOMAIN"
+  [[ -n "$PROJECT_NAME" ]] && gum style --faint "Project Name: $PROJECT_NAME"
+  [[ -n "$REPOSITORY" ]] && gum style --faint "Repository: $REPOSITORY"
+  [[ -n "$BRANCH" && "$BRANCH" != "main" ]] && gum style --faint "Branch: $BRANCH"
+  gum style --faint "Installation Path: $PROJECT_PATH"
+  [[ "$UPDATE_EXISTING" == "true" ]] && gum style --faint "Mode: Update existing"
+  [[ "$FORCE_INSTALL" == "true" ]] && gum style --faint "Force overwrite: Yes"
+  echo
+  
+  if ! gum confirm "Proceed with installation?"; then
+    gum style --foreground 214 "Installation cancelled"
+    exit 0
+  fi
+}
 
 # Check if Nginx is installed
 check_nginx_installed() {
@@ -216,29 +239,26 @@ validate_requirements() {
   fi
 }
 
-# Validate arguments
+# Validate user input (called after get_user_input)
 validate_arguments() {
-  if [[ -z "$DOMAIN" ]]; then
-    echo "Error: Domain name is required (use --domain)" >&2
-    show_help
+  # Domain is already validated in get_user_input with required loop
+  
+  # Validate project name for new installations
+  if [[ "$UPDATE_EXISTING" == "false" ]] && [[ -z "$REPOSITORY" ]] && [[ -z "$PROJECT_NAME" ]]; then
+    gum style --foreground 196 "Error: Project name is required for new Laravel installations"
     exit 1
   fi
   
-  if [[ "$UPDATE_EXISTING" == "false" ]] && [[ -z "$PROJECT_NAME" ]] && [[ -z "$REPOSITORY" ]]; then
-    echo "Error: Either --name or --repository is required for new installations" >&2
-    show_help
-    exit 1
+  # Validate repository URL for cloning
+  if [[ -n "$REPOSITORY" ]] && [[ -z "$PROJECT_NAME" ]]; then
+    # For repository cloning, we don't need PROJECT_NAME
+    true
   fi
   
-  # Set default project path if not specified
-  if [[ -z "$PROJECT_PATH" ]]; then
-    PROJECT_PATH="/var/www/$DOMAIN"
-  fi
-  
-  # Check if project already exists
+  # Check if project already exists (unless force or update)
   if [[ -d "$PROJECT_PATH" ]] && [[ "$UPDATE_EXISTING" == "false" ]] && [[ "$FORCE_INSTALL" == "false" ]]; then
-    echo "Error: Directory $PROJECT_PATH already exists" >&2
-    echo "Use --force to overwrite or --update to update existing installation" >&2
+    gum style --foreground 196 "Error: Directory $PROJECT_PATH already exists"
+    gum style --faint "Use 'Configure advanced options' to force overwrite, or choose 'Update existing application'"
     exit 1
   fi
 }
@@ -533,6 +553,7 @@ run_laravel_nginx_health_check() {
 main() {
   check_nginx_installed
   validate_requirements
+  get_user_input
   validate_arguments
   
   if declare -f log_info >/dev/null 2>&1; then
@@ -545,7 +566,7 @@ main() {
   # Check if already configured
   if is_laravel_configured && is_nginx_configured && [[ "$FORCE_INSTALL" == "false" ]] && [[ "$UPDATE_EXISTING" == "false" ]]; then
     gum style --foreground 82 "Laravel application already configured for $DOMAIN"
-    gum style --faint "Use --force to reinstall or --update to update"
+    gum style --faint "Choose 'Update existing application' or use advanced options to force overwrite"
     exit 0
   fi
   
@@ -585,4 +606,4 @@ main() {
   run_laravel_nginx_health_check
 }
 
-main "$@"
+main
