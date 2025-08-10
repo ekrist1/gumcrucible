@@ -70,7 +70,7 @@ confirm_install() {
   else
     # changed: do not reassign stdin globally; read from /dev/tty for this prompt only
     if [[ -r /dev/tty ]]; then
-      read -r -p "$prompt" reply </dev/tty
+      read -r -p "$prompt" reply < /dev/tty
     else
       echo "[crucible] Non-interactive session detected; refusing to install gum without confirmation." >&2
       return 1
