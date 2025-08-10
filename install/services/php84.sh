@@ -72,10 +72,101 @@ choose_timezone() {
     sys_tz=$(timedatectl 2>/dev/null | awk -F': ' '/Time zone/ {print $2}' | awk '{print $1}') || true
     [[ -n "$sys_tz" ]] && default_tz="$sys_tz"
   fi
+  
   if command_exists gum; then
-    local tz
-    tz=$(gum input --placeholder "Timezone (e.g. UTC, Europe/Oslo)" --value "$default_tz" || echo "$default_tz")
-    echo "$tz"
+    gum style --foreground 45 --bold "PHP Timezone Configuration"
+    gum style --faint "Select your timezone for PHP configuration. This affects date/time functions."
+    gum style --faint "You can change this later by editing php.ini files manually."
+    echo
+    
+    # Common timezone options
+    local timezones=(
+      "UTC (Coordinated Universal Time)"
+      "America/New_York (US East Coast)"
+      "America/Chicago (US Central)"
+      "America/Denver (US Mountain)" 
+      "America/Los_Angeles (US West Coast)"
+      "Europe/London (UK)"
+      "Europe/Paris (Central Europe)"
+      "Europe/Berlin (Germany)"
+      "Europe/Amsterdam (Netherlands)"
+      "Europe/Stockholm (Sweden)"
+      "Europe/Oslo (Norway)"
+      "Asia/Tokyo (Japan)"
+      "Asia/Shanghai (China)"
+      "Asia/Kolkata (India)"
+      "Australia/Sydney (Australia East)"
+      "Custom timezone (manual input)"
+    )
+    
+    # Add detected system timezone to top if different from UTC
+    if [[ "$default_tz" != "UTC" && "$default_tz" != "" ]]; then
+      timezones=("$default_tz (detected system timezone)" "${timezones[@]}")
+    fi
+    
+    local choice
+    choice=$(gum choose --header "Choose PHP timezone:" "${timezones[@]}") || {
+      echo "$default_tz"
+      return
+    }
+    
+    case "$choice" in
+      *"detected system timezone"*)
+        echo "$default_tz"
+        ;;
+      "UTC"*)
+        echo "UTC"
+        ;;
+      "America/New_York"*)
+        echo "America/New_York"
+        ;;
+      "America/Chicago"*)
+        echo "America/Chicago"
+        ;;
+      "America/Denver"*)
+        echo "America/Denver"
+        ;;
+      "America/Los_Angeles"*)
+        echo "America/Los_Angeles"
+        ;;
+      "Europe/London"*)
+        echo "Europe/London"
+        ;;
+      "Europe/Paris"*)
+        echo "Europe/Paris"
+        ;;
+      "Europe/Berlin"*)
+        echo "Europe/Berlin"
+        ;;
+      "Europe/Amsterdam"*)
+        echo "Europe/Amsterdam"
+        ;;
+      "Europe/Stockholm"*)
+        echo "Europe/Stockholm"
+        ;;
+      "Europe/Oslo"*)
+        echo "Europe/Oslo"
+        ;;
+      "Asia/Tokyo"*)
+        echo "Asia/Tokyo"
+        ;;
+      "Asia/Shanghai"*)
+        echo "Asia/Shanghai"
+        ;;
+      "Asia/Kolkata"*)
+        echo "Asia/Kolkata"
+        ;;
+      "Australia/Sydney"*)
+        echo "Australia/Sydney"
+        ;;
+      "Custom timezone"*)
+        gum style --faint "Enter custom timezone (e.g. Asia/Dubai, Pacific/Auckland):"
+        gum input --placeholder "Custom timezone" --value "$default_tz" || echo "$default_tz"
+        ;;
+      *)
+        echo "$default_tz"
+        ;;
+    esac
   else
     echo "$default_tz"
   fi
@@ -196,13 +287,30 @@ main() {
 
   local tz
   tz=$(choose_timezone)
+  
   # Attempt common ini locations
   local sudo_cmd
   sudo_cmd=$(need_sudo || true)
   
+  local configured_files=()
   for ini in /etc/php/${PHP_TARGET_MAJOR}/fpm/php.ini /etc/php/${PHP_TARGET_MAJOR}/cli/php.ini /etc/php.ini; do
-    [[ -f $ini ]] && configure_php_ini "$ini" "$tz"
+    if [[ -f $ini ]]; then
+      configure_php_ini "$ini" "$tz"
+      configured_files+=("$ini")
+    fi
   done
+  
+  # Show user where timezone was configured
+  if [[ ${#configured_files[@]} -gt 0 ]]; then
+    echo
+    gum style --foreground 82 "PHP timezone set to: $tz"
+    gum style --faint "To change timezone later, edit these files:"
+    for file in "${configured_files[@]}"; do
+      gum style --faint "  • $file"
+    done
+    gum style --faint "Look for: date.timezone = $tz"
+    echo
+  fi
 
   # Enable and start php-fpm service where applicable
   if systemctl list-unit-files | grep -q php-fpm; then

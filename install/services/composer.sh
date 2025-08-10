@@ -55,23 +55,47 @@ already_installed() { command_exists composer; }
 
 install_via_official() {
   # Requires PHP CLI; installs to /usr/local/bin/composer
+  # Uses official programmatic installation method from getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md
   if ! command_exists php; then
     gum style --foreground 196 --bold "PHP CLI is required for Composer installer."
     gum style --faint "Tip: Use Core Services -> Install PHP 8.4 first."
     return 2
   fi
+  
   local tmpdir
   tmpdir=$(mktemp -d)
-  pushd "$tmpdir" >/dev/null
-  gum spin --spinner line --title "Downloading composer installer" -- bash -c "php -r 'copy(\"https://getcomposer.org/installer\", \"composer-setup.php\");' >/dev/null 2>&1"
-  # Prevent bash from expanding $sig/$hash by using single-quoted command string
-  gum spin --spinner line --title "Verifying installer signature" -- bash -c 'php -r "copy(\"https://composer.github.io/installer.sig\", \"composer-setup.sig\"); $sig=trim(file_get_contents(\"composer-setup.sig\")); $hash=hash_file(\"sha384\", \"composer-setup.php\"); if($sig!==$hash){fwrite(STDERR, \"Signature mismatch\n\"); exit(1);}";'
   local sudo_cmd
   sudo_cmd=$(need_sudo || true)
-  gum spin --spinner line --title "Installing composer to /usr/local/bin" -- bash -c "${sudo_cmd:-} php composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null 2>&1"
-  gum spin --spinner line --title "Cleaning up" -- bash -c "rm -f composer-setup.php composer-setup.sig >/dev/null 2>&1"
-  popd >/dev/null
+  
+  gum spin --spinner line --title "Installing Composer via official installer" -- bash -c "
+    cd '$tmpdir' || exit 1
+    
+    # Official programmatic installation script
+    EXPECTED_CHECKSUM=\"\$(php -r 'copy(\"https://composer.github.io/installer.sig\", \"php://stdout\");')\"
+    php -r 'copy(\"https://getcomposer.org/installer\", \"composer-setup.php\");'
+    ACTUAL_CHECKSUM=\"\$(php -r \"echo hash_file('sha384', 'composer-setup.php');\")\"
+    
+    if [ \"\$EXPECTED_CHECKSUM\" != \"\$ACTUAL_CHECKSUM\" ]; then
+      echo 'ERROR: Invalid installer checksum' >&2
+      rm composer-setup.php
+      exit 1
+    fi
+    
+    # Install composer
+    ${sudo_cmd:-} php composer-setup.php --install-dir=/usr/local/bin --filename=composer --quiet
+    RESULT=\$?
+    rm composer-setup.php
+    
+    exit \$RESULT
+  "
+  
+  local exit_code=$?
   rm -rf "$tmpdir"
+  
+  if [ $exit_code -ne 0 ]; then
+    gum style --foreground 196 "Composer installation failed"
+    return $exit_code
+  fi
 }
 
 install_via_pkg() {

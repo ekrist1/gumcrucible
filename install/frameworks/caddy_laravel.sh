@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Prepare Caddy + PHP-FPM socket configuration for a Laravel site.
-# Creates a dedicated PHP-FPM pool (caddy) with a unix socket and updates Caddyfile.
-# Prompts for domain and project path. Idempotent and will backup existing configs.
+# Configure Caddy + PHP-FPM for Laravel application
+# Invokable script that configures Caddy without user input
+# Creates dedicated PHP-FPM pool and updates Caddyfile with Laravel-optimized configuration
+# Based on modern Caddy v2 best practices for Laravel applications
 set -euo pipefail
+
+# Set component name for logging
+export CRUCIBLE_COMPONENT="caddy_laravel"
 
 if ! command -v gum >/dev/null 2>&1; then
   echo "[caddy-laravel][warn] gum not found; proceeding without UI prompts" >&2
@@ -53,19 +57,61 @@ fi
 CADDYFILE="/etc/caddy/Caddyfile"
 BACKUP_SUFFIX=".bak.$(date +%Y%m%d%H%M%S)"
 
-# Gather inputs
-project_path_default="/var/www/laravel"
-if command_exists gum; then
-  gum style --foreground 45 --bold "Configure Laravel site for Caddy"
-  DOMAIN=$(gum input --placeholder "Domain (blank for :80)" --value "" || echo "")
-  PROJECT_PATH=$(gum input --placeholder "Laravel project path" --value "$project_path_default" || echo "$project_path_default")
-  EMAIL=$(gum input --placeholder "ACME email (optional)" --value "" || echo "")
-else
-  DOMAIN=""; PROJECT_PATH="$project_path_default"; EMAIL=""
-fi
+# Parse command line arguments
+DOMAIN=""
+PROJECT_PATH="/var/www/laravel"
+EMAIL=""
 
-[[ -z "$PROJECT_PATH" ]] && PROJECT_PATH="$project_path_default"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --domain|-d)
+      DOMAIN="$2"
+      shift 2
+      ;;
+    --path|-p)
+      PROJECT_PATH="$2"
+      shift 2
+      ;;
+    --email|-e)
+      EMAIL="$2"
+      shift 2
+      ;;
+    -h|--help)
+      cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Configure Caddy + PHP-FPM for Laravel application
+
+OPTIONS:
+    -d, --domain DOMAIN     Domain name (optional, defaults to :80)
+    -p, --path PATH         Laravel project path (default: /var/www/laravel)
+    -e, --email EMAIL       ACME email for Let's Encrypt (optional)
+    -h, --help              Show this help message
+
+EXAMPLES:
+    $(basename "$0")                                    # Default setup on :80
+    $(basename "$0") -d example.com -p /var/www/myapp   # Custom domain and path
+    $(basename "$0") --domain example.com --email admin@example.com
+
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
 PUBLIC_DIR="$PROJECT_PATH/public"
+
+# Log configuration being applied
+if declare -f log_info >/dev/null 2>&1; then
+  log_info "Configuring Caddy for Laravel application"
+  log_info "Domain: ${DOMAIN:-:80}"
+  log_info "Project path: $PROJECT_PATH"
+  log_info "Public directory: $PUBLIC_DIR"
+fi
 
 # Create project/public if absent
 if [[ ! -d "$PUBLIC_DIR" ]]; then
@@ -95,7 +141,7 @@ if [[ ! -f $TMPFILES_CONF ]]; then
   echo "d $SOCKET_DIR 0755 caddy caddy -" | run tee "$TMPFILES_CONF" >/dev/null || true
 fi
 
-# Create / update PHP-FPM pool configuration
+# Create / update PHP-FPM pool configuration (idempotent)
 POOL_CONTENT="[caddy]
 user = caddy
 group = caddy
@@ -112,25 +158,36 @@ php_admin_value[error_log] = /var/log/php-fpm/caddy-error.log
 php_admin_flag[log_errors] = on
 "
 
-if [[ -f "$POOL_FILE" ]]; then
-  OVERWRITE=yes
-  if command_exists gum; then
-    gum confirm "Overwrite existing pool $(basename "$POOL_FILE")?" || OVERWRITE=no
+# Check if pool configuration needs updating (idempotent)
+pool_needs_update=false
+if [[ ! -f "$POOL_FILE" ]]; then
+  pool_needs_update=true
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "Creating new PHP-FPM pool configuration: $POOL_FILE"
   fi
-  if [[ $OVERWRITE == yes ]]; then
+elif ! diff -q <(echo "$POOL_CONTENT") "$POOL_FILE" >/dev/null 2>&1; then
+  pool_needs_update=true
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "PHP-FPM pool configuration needs updating: $POOL_FILE"
+  fi
+  # Backup existing file
+  if declare -f backup_file >/dev/null 2>&1; then
+    backup_file "$POOL_FILE"
+  else
     run cp "$POOL_FILE" "${POOL_FILE}${BACKUP_SUFFIX}" || true
-    printf "%s" "$POOL_CONTENT" | run tee "$POOL_FILE" >/dev/null
   fi
 else
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "PHP-FPM pool configuration already correct: $POOL_FILE"
+  fi
+fi
+
+if [[ "$pool_needs_update" == "true" ]]; then
   printf "%s" "$POOL_CONTENT" | run tee "$POOL_FILE" >/dev/null
 fi
 
-# Build Caddyfile block
-SITE_BLOCK=""
+# Build modern Laravel Caddyfile configuration based on best practices
 PHP_SOCK="unix//${SOCKET_DIR}/caddy.sock"
-ROOT_DIRECTIVE="root * ${PUBLIC_DIR}"
-FASTCGI_DIRECTIVE="php_fastcgi ${PHP_SOCK}"
-EXTRA_HEADER="header X-Powered-By \"Crucible\""
 
 if [[ -n "$DOMAIN" ]]; then
   SITE_LABEL="$DOMAIN"
@@ -138,39 +195,175 @@ else
   SITE_LABEL=":80"
 fi
 
-SITE_BLOCK+="$SITE_LABEL {\n"
-SITE_BLOCK+="    ${ROOT_DIRECTIVE}\n"
-SITE_BLOCK+="    encode gzip\n"
-SITE_BLOCK+="    ${FASTCGI_DIRECTIVE}\n"
-SITE_BLOCK+="    file_server\n"
-SITE_BLOCK+="    ${EXTRA_HEADER}\n"
-SITE_BLOCK+="}\n"
+# Modern Laravel Caddy v2 configuration with optimizations
+SITE_BLOCK="$SITE_LABEL {
+    root * ${PUBLIC_DIR}
+    
+    # Compression with modern algorithms
+    encode zstd gzip
+    
+    # PHP-FPM integration for Laravel
+    php_fastcgi ${PHP_SOCK}
+    
+    # Static file serving
+    file_server
+    
+    # Security headers
+    header {
+        X-Frame-Options DENY
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        X-Powered-By \"Crucible Laravel\"
+    }
+    
+    # Handle Laravel's index.php routing
+    try_files {path} {path}/ /index.php?{query}
+}
+"
 
+# Global configuration block
 if [[ -n "$EMAIL" ]]; then
-  GLOBAL_BLOCK="{\n    email ${EMAIL}\n}\n\n"
+  GLOBAL_BLOCK="{
+    email ${EMAIL}
+}
+
+"
 else
   GLOBAL_BLOCK=""
 fi
 
-# Merge into Caddyfile (simple strategy: replace existing Crucible block or append)
-if [[ -f "$CADDYFILE" ]] && grep -q "Crucible" "$CADDYFILE"; then
-  run cp "$CADDYFILE" "${CADDYFILE}${BACKUP_SUFFIX}" || true
-  awk -v block="$SITE_BLOCK" 'BEGIN{printed=0} /Crucible BEGIN/{print;print block;printed=1;skip=1} /Crucible END/{print;skip=0;next} !skip{print} END{if(!printed)print block}' "$CADDYFILE" | run tee "$CADDYFILE" >/dev/null
+# Update Caddyfile configuration (idempotent)
+caddy_needs_update=false
+site_marker="# Crucible Laravel Site: ${SITE_LABEL//[^a-zA-Z0-9._-]/_}"
+
+# Check if Caddyfile needs updating
+if [[ ! -f "$CADDYFILE" ]]; then
+  caddy_needs_update=true
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "Creating new Caddyfile: $CADDYFILE"
+  fi
+elif ! grep -q "$site_marker" "$CADDYFILE"; then
+  caddy_needs_update=true
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "Adding Laravel site configuration to Caddyfile"
+  fi
 else
-  # Append with markers
-  if [[ -f "$CADDYFILE" ]]; then run cp "$CADDYFILE" "${CADDYFILE}${BACKUP_SUFFIX}" || true; fi
-  { [[ -n "$GLOBAL_BLOCK" ]] && printf "%s" "$GLOBAL_BLOCK"; echo "# Crucible Laravel Block BEGIN"; printf "%s" "$SITE_BLOCK"; echo "# Crucible Laravel Block END"; } | run tee -a "$CADDYFILE" >/dev/null
+  # Check if existing configuration matches
+  if grep -A 20 "$site_marker" "$CADDYFILE" | grep -q "root \* $PUBLIC_DIR"; then
+    if declare -f log_info >/dev/null 2>&1; then
+      log_info "Caddyfile configuration already correct for site: $SITE_LABEL"
+    fi
+  else
+    caddy_needs_update=true
+    if declare -f log_info >/dev/null 2>&1; then
+      log_info "Updating existing Laravel site configuration in Caddyfile"
+    fi
+  fi
 fi
 
-# Reload services
-if systemctl list-unit-files | grep -q "$SERVICE_FPM"; then
-  run systemctl restart "$SERVICE_FPM" || true
+if [[ "$caddy_needs_update" == "true" ]]; then
+  # Backup existing Caddyfile
+  if [[ -f "$CADDYFILE" ]]; then
+    if declare -f backup_file >/dev/null 2>&1; then
+      backup_file "$CADDYFILE"
+    else
+      run cp "$CADDYFILE" "${CADDYFILE}${BACKUP_SUFFIX}" || true
+    fi
+  fi
+  
+  # Create or update Caddyfile
+  if [[ -f "$CADDYFILE" ]] && grep -q "$site_marker" "$CADDYFILE"; then
+    # Update existing site configuration
+    temp_file=$(mktemp)
+    awk -v marker="$site_marker" -v block="$SITE_BLOCK" '
+      BEGIN { in_block = 0; printed = 0 }
+      $0 ~ marker { 
+        print $0
+        print block
+        printed = 1
+        in_block = 1
+        next
+      }
+      in_block && $0 ~ /^}/ {
+        in_block = 0
+        next
+      }
+      !in_block { print }
+    ' "$CADDYFILE" > "$temp_file"
+    run mv "$temp_file" "$CADDYFILE"
+  else
+    # Append new site configuration
+    {
+      [[ -n "$GLOBAL_BLOCK" ]] && printf "%s" "$GLOBAL_BLOCK"
+      echo "$site_marker"
+      printf "%s\n" "$SITE_BLOCK"
+    } | run tee -a "$CADDYFILE" >/dev/null
+  fi
 fi
-run systemctl reload caddy 2>/dev/null || run systemctl restart caddy || true
 
+# Reload services if configurations were updated
+if [[ "$pool_needs_update" == "true" ]] || [[ "$caddy_needs_update" == "true" ]]; then
+  if systemctl list-unit-files | grep -q "$SERVICE_FPM"; then
+    if declare -f log_info >/dev/null 2>&1; then
+      log_info "Restarting PHP-FPM service: $SERVICE_FPM"
+    fi
+    run systemctl restart "$SERVICE_FPM" || true
+  fi
+  
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "Reloading Caddy configuration"
+  fi
+  run systemctl reload caddy 2>/dev/null || run systemctl restart caddy || true
+else
+  if declare -f log_info >/dev/null 2>&1; then
+    log_info "No service restart needed - configurations unchanged"
+  fi
+fi
+
+# Summary output
 if command_exists gum; then
-  gum style --foreground 82 --bold "Caddy Laravel preparation complete" \
-    "\nDomain: ${DOMAIN:-:80}\nRoot: $PUBLIC_DIR\nPHP-FPM pool: $(basename "$POOL_FILE")"
+  gum style --foreground 82 --bold "Caddy Laravel configuration complete"
+  gum style --faint "Domain: ${DOMAIN:-:80}"
+  gum style --faint "Project root: $PROJECT_PATH"
+  gum style --faint "Public directory: $PUBLIC_DIR" 
+  gum style --faint "PHP-FPM pool: $(basename "$POOL_FILE")"
+  gum style --faint "Socket: $PHP_SOCK"
 else
-  echo "[caddy-laravel] Complete. Root: $PUBLIC_DIR Domain: ${DOMAIN:-:80}"
+  echo "[caddy-laravel] Configuration complete"
+  echo "  Domain: ${DOMAIN:-:80}"
+  echo "  Project root: $PROJECT_PATH"
+  echo "  Public directory: $PUBLIC_DIR"
+  echo "  PHP-FPM pool: $(basename "$POOL_FILE")"
+fi
+
+run_caddy_laravel_health_check() {
+  if ! declare -f health_check_summary >/dev/null 2>&1; then
+    if declare -f log_warn >/dev/null 2>&1; then
+      log_warn "Health check functions not available, skipping validation"
+    fi
+    return 0
+  fi
+  
+  local checks=(
+    "validate_service_enabled caddy"
+    "validate_service_running caddy"
+    "validate_service_enabled $SERVICE_FPM"
+    "validate_service_running $SERVICE_FPM"
+    "test -f '$CADDYFILE'"
+    "test -f '$POOL_FILE'"
+    "test -S '$SOCKET_DIR/caddy.sock'"
+    "test -d '$PUBLIC_DIR'"
+  )
+  
+  # Check if Caddy configuration is valid
+  if command_exists caddy; then
+    checks+=("caddy validate --config '$CADDYFILE' >/dev/null 2>&1")
+  fi
+  
+  health_check_summary "Caddy Laravel Configuration" "${checks[@]}"
+}
+
+# Run health check if available
+if declare -f health_check_summary >/dev/null 2>&1; then
+  run_caddy_laravel_health_check
 fi

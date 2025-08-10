@@ -288,6 +288,6 @@ echo "[crucible] Current directory: $(pwd)"
 echo "[crucible] Repository contents:"
 ls -la | head -10
 
-echo "[crucible] Executing startup script: $STARTUP"
-exec "$STARTUP" "$@"
+echo "[crucible] Executing startup script: ./startup.sh"
+exec ./startup.sh "$@"
 # --- end changed ---
