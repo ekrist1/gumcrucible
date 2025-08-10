@@ -64,18 +64,24 @@ fi
 confirm_install() {
   local prompt="This will add the Charm repository and install 'gum' on your system. Proceed? [y/N] "
   local reply
-  # Read from TTY when available to avoid piping issues
+  
+  # Always show the prompt to stderr first to ensure it's visible
+  echo -n "$prompt" >&2
+  
+  # Try multiple methods to read from terminal
   if [[ -t 0 ]]; then
-    read -r -p "$prompt" reply
+    # Standard input is connected to terminal
+    read -r reply
+  elif [[ -r /dev/tty ]]; then
+    # Fallback to direct TTY access
+    read -r reply < /dev/tty
   else
-    # changed: do not reassign stdin globally; read from /dev/tty for this prompt only
-    if [[ -r /dev/tty ]]; then
-      read -r -p "$prompt" reply < /dev/tty
-    else
-      echo "[crucible] Non-interactive session detected; refusing to install gum without confirmation." >&2
-      return 1
-    fi
+    # Last resort - assume non-interactive
+    echo "" >&2
+    echo "[crucible] Non-interactive session detected; refusing to install gum without confirmation." >&2
+    return 1
   fi
+  
   case "${reply}" in
     [Yy]|[Yy][Ee][Ss]) return 0 ;;
     *) return 1 ;;
@@ -264,12 +270,24 @@ if [[ ! -x "$STARTUP" ]]; then
   chmod +x "$STARTUP"
 fi
 
+# Verify the repository was downloaded correctly
+if [[ ! -d "$INSTALL_BASE/install" ]]; then
+  echo "[crucible][error] Repository structure incomplete - missing install directory" >&2
+  echo "[crucible][error] Expected: $INSTALL_BASE/install" >&2
+  exit 5
+fi
+
 # Change to the repository directory before executing startup.sh
+echo "[crucible] Changing to directory: $INSTALL_BASE"
 cd "$INSTALL_BASE" || {
   echo "[crucible][error] Cannot change to directory: $INSTALL_BASE" >&2
-  exit 5
+  exit 6
 }
 
-echo "[crucible] Executing startup script from directory: $(pwd)"
+echo "[crucible] Current directory: $(pwd)"
+echo "[crucible] Repository contents:"
+ls -la | head -10
+
+echo "[crucible] Executing startup script: $STARTUP"
 exec "$STARTUP" "$@"
 # --- end changed ---
