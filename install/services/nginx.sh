@@ -7,7 +7,7 @@ set -euo pipefail
 # Set component name for logging
 export CRUCIBLE_COMPONENT="nginx"
 
-PROGRESS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/..\" && pwd)/lib/progress.sh"
+PROGRESS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/progress.sh"
 [[ -f "$PROGRESS_LIB" ]] && source "$PROGRESS_LIB"
 
 if ! command -v gum >/dev/null 2>&1; then
