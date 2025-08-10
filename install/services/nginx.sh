@@ -65,10 +65,7 @@ install_ubuntu_debian() {
   fi
   
   # Install additional useful packages for PHP integration
-  local extra_packages=(nginx-module-* 2>/dev/null || echo "")
-  if [[ -n "$extra_packages" ]]; then
-    gum spin --spinner line --title "Installing additional Nginx modules" -- bash -c "${sudo_cmd:-} apt-get install -y nginx-extras >/dev/null 2>&1 || true"
-  fi
+  gum spin --spinner line --title "Installing additional Nginx modules" -- bash -c "${sudo_cmd:-} apt-get install -y nginx-extras >/dev/null 2>&1 || true"
 }
 
 install_fedora_like() {
