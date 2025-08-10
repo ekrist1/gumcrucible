@@ -24,9 +24,10 @@ has_php84() {
   fi
 }
 
-has_caddy() { command_exists caddy; }
 has_composer() { command_exists composer; }
 has_docker() { command_exists docker; }
+has_caddy() { command_exists caddy; }
+has_nginx() { command_exists nginx; }
 has_mysql() {
   # Check for mysql/mariadb client
   if command_exists mysql || command_exists mariadb; then return 0; fi
@@ -46,15 +47,6 @@ install_php() {
     bash "$php_script"
   else
     gum style --foreground 196 "Missing: services/php84.sh"
-  fi
-}
-
-install_caddy() {
-  local caddy_script="${SCRIPT_DIR}/services/caddy.sh"
-  if [[ -f "$caddy_script" ]]; then
-    bash "$caddy_script"
-  else
-    gum style --foreground 196 "Missing: services/caddy.sh"
   fi
 }
 
@@ -80,30 +72,46 @@ install_docker() {
   fi
 }
 
+install_caddy() {
+  gum spin --spinner line --title "(placeholder) Installing Caddy" -- sleep 1
+}
+
+install_nginx() {
+  local nginx_script="${SCRIPT_DIR}/services/nginx.sh"
+  if [[ -f "$nginx_script" ]]; then
+    bash "$nginx_script"
+  else
+    gum style --foreground 196 "Missing: services/nginx.sh"
+  fi
+}
+
 while true; do
   clear || true
   # Dynamic checkmarks
   mark_php=$(has_php84 && echo "[x]" || echo "[ ]")
-  mark_caddy=$(has_caddy && echo "[x]" || echo "[ ]")
   mark_comp=$(has_composer && echo "[x]" || echo "[ ]")
   mark_docker=$(has_docker && echo "[x]" || echo "[ ]")
+  mark_caddy=$(has_caddy && echo "[x]" || echo "[ ]")
+  mark_nginx=$(has_nginx && echo "[x]" || echo "[ ]")
   mark_mysql=$(has_mysql && echo "[x]" || echo "[ ]")
 
   choice=$(gum choose --header "Core Services" \
     "${mark_php} Install PHP 8.4" \
-    "${mark_caddy} Install Caddy" \
     "${mark_comp} Install Composer" \
+    "${mark_caddy} Install Caddy" \
+    "${mark_nginx} Install Nginx & Certbot" \
     "${mark_docker} Install Docker & Compose" \
     "${mark_mysql} Install MySQL" \
     "Install All" \
     "Back") || exit 0
   case "$choice" in
     *"Install PHP 8.4"*) install_php ;;
-  *"Install Caddy"*) install_caddy ;;
-  *"Install Composer"*) install_composer ;;
-  *"Install Docker & Compose"*) install_docker ;;
-  *"Install MySQL"*) install_mysql ;;
-  "Install All") install_php; install_caddy; install_composer; install_docker; install_mysql ;;
+    *"Install Composer"*) install_composer ;;
+    *"Install Caddy"*) install_caddy ;;
+    *"Install Nginx & Certbot"*) install_nginx ;;
+    *"Install Docker & Compose"*) install_docker ;;
+    *"Install MySQL"*) install_mysql ;;
+    "Install All") install_php; install_composer; install_caddy; install_nginx; install_docker; install_mysql ;;
     Back) break ;;
   esac
   gum confirm "Another core service action?" || break

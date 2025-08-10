@@ -194,10 +194,14 @@ configure_php_ini() {
   )
   
   for key in "${!settings[@]}"; do
+    local value="${settings[$key]}"
     if grep -qE "^;?${key}\s*=" "$ini_file"; then
-      ${sudo_cmd:-} sed -i "s|^;\?${key}\s*=.*|${key} = ${settings[$key]}|" "$ini_file"
+      # Use a safe delimiter that won't conflict with timezone paths or other values
+      # Escape any forward slashes in the value for sed
+      local escaped_value="${value//\//\\/}"
+      ${sudo_cmd:-} sed -i "s/^;\?${key}\s*=.*/${key} = ${escaped_value}/" "$ini_file"
     else
-      echo "${key} = ${settings[$key]}" | ${sudo_cmd:-} tee -a "$ini_file" >/dev/null
+      echo "${key} = ${value}" | ${sudo_cmd:-} tee -a "$ini_file" >/dev/null
     fi
   done
 }

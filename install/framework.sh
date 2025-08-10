@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Placeholder framework installer (Laravel, Next)
+# Framework installer (Laravel, Next.js)
 set -euo pipefail
 
 clear || true
@@ -11,28 +11,71 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-CHOICE=$(gum choose --header "Select framework" \
-  "Laravel" \
-  "Prepare Caddy for Laravel" \
-  "Next" \
-  "Cancel") || exit 0
-case "$CHOICE" in
-  Laravel)
-    gum spin --spinner pulse --title "(placeholder) Setting up Laravel" -- sleep 2
-    gum style --foreground 82 "Laravel placeholder done."
-    ;;
-  "Prepare Caddy for Laravel")
-    script_laravel="${SCRIPT_DIR}/frameworks/caddy_laravel.sh"
-    if [[ -f "$script_laravel" ]]; then
-      bash "$script_laravel"
-    else
-      gum style --foreground 196 "Missing: frameworks/caddy_laravel.sh"
-    fi
-    ;;
-  Next)
-    gum spin --spinner pulse --title "(placeholder) Setting up Next.js" -- sleep 2
-    gum style --foreground 82 "Next.js placeholder done."
-    ;;
-  Cancel)
-    gum style --foreground 214 "Cancelled framework selection" ;;
- esac
+# Detection helpers for checkmarks
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+has_laravel_caddy() {
+  # Check if caddy_laravel script exists
+  [[ -f "${SCRIPT_DIR}/frameworks/caddy_laravel.sh" ]]
+}
+
+has_laravel_nginx() {
+  # Check if laravel_nginx script exists and nginx is installed
+  [[ -f "${SCRIPT_DIR}/frameworks/laravel_nginx.sh" ]] && command_exists nginx
+}
+
+launch_script() {
+  local script="$1"
+  local target="${SCRIPT_DIR}/frameworks/${script}"
+  if [[ -x "$target" ]]; then
+    "$target"
+  elif [[ -f "$target" ]]; then
+    bash "$target"
+  else
+    gum style --foreground 196 "Missing script: frameworks/${script}"
+    return 1
+  fi
+}
+
+while true; do
+  clear || true
+  
+  # Dynamic checkmarks
+  mark_caddy=$(has_laravel_caddy && echo "[✓]" || echo "[ ]")
+  mark_nginx=$(has_laravel_nginx && echo "[✓]" || echo "[!]")
+  
+  CHOICE=$(gum choose --header "Framework Installation" \
+    "${mark_caddy} Laravel + Caddy" \
+    "${mark_nginx} Laravel + Nginx" \
+    "Next.js (placeholder)" \
+    "Back") || exit 0
+  
+  case "$CHOICE" in
+    *"Laravel + Caddy"*)
+      gum style --foreground 45 --bold "Launching Laravel + Caddy installer"
+      launch_script "caddy_laravel.sh" || true
+      ;;
+    *"Laravel + Nginx"*)
+      if ! command_exists nginx; then
+        gum style --foreground 196 --bold "Nginx is required for Laravel + Nginx installation"
+        gum style --faint "Install Nginx first through Core Services menu"
+        gum confirm "Continue anyway?" || continue
+      fi
+      gum style --foreground 45 --bold "Launching Laravel + Nginx installer"
+      launch_script "laravel_nginx.sh" || true
+      ;;
+    "Next.js (placeholder)")
+      gum spin --spinner pulse --title "(placeholder) Setting up Next.js" -- sleep 2
+      gum style --foreground 82 "Next.js placeholder done."
+      ;;
+    "Back")
+      break
+      ;;
+  esac
+  
+  echo
+  gum confirm "Install another framework?" || break
+  echo
+done
+
+gum style --foreground 82 --bold "Framework menu complete."
