@@ -28,6 +28,10 @@ has_composer() { command_exists composer; }
 has_docker() { command_exists docker; }
 has_caddy() { command_exists caddy; }
 has_nginx() { command_exists nginx; }
+has_mcert() { command_exists mkcert; }
+has_node() {
+  command_exists node && command_exists npm
+}
 has_mysql() {
   # Check for mysql/mariadb client
   if command_exists mysql || command_exists mariadb; then return 0; fi
@@ -51,7 +55,12 @@ install_php() {
 }
 
 install_mysql() {
-  gum spin --spinner line --title "(placeholder) Installing MySQL" -- sleep 1
+  local mysql_script="${SCRIPT_DIR}/services/mysql.sh"
+  if [[ -f "$mysql_script" ]]; then
+    bash "$mysql_script"
+  else
+    gum style --foreground 196 "Missing: services/mysql.sh"
+  fi
 }
 
 install_composer() {
@@ -85,6 +94,24 @@ install_nginx() {
   fi
 }
 
+install_mcert() {
+  local mcert_script="${SCRIPT_DIR}/services/mcert.sh"
+  if [[ -f "$mcert_script" ]]; then
+    bash "$mcert_script"
+  else
+    gum style --foreground 196 "Missing: services/mcert.sh"
+  fi
+}
+
+install_node() {
+  local node_script="${SCRIPT_DIR}/services/node.sh"
+  if [[ -f "$node_script" ]]; then
+    bash "$node_script"
+  else
+    gum style --foreground 196 "Missing: services/node.sh"
+  fi
+}
+
 while true; do
   clear || true
   # Dynamic checkmarks
@@ -93,6 +120,8 @@ while true; do
   mark_docker=$(has_docker && echo "[x]" || echo "[ ]")
   mark_caddy=$(has_caddy && echo "[x]" || echo "[ ]")
   mark_nginx=$(has_nginx && echo "[x]" || echo "[ ]")
+  mark_mcert=$(has_mcert && echo "[x]" || echo "[ ]")
+  mark_node=$(has_node && echo "[x]" || echo "[ ]")
   mark_mysql=$(has_mysql && echo "[x]" || echo "[ ]")
 
   choice=$(gum choose --header "Core Services" \
@@ -100,6 +129,8 @@ while true; do
     "${mark_comp} Install Composer" \
     "${mark_caddy} Install Caddy" \
     "${mark_nginx} Install Nginx & Certbot" \
+    "${mark_mcert} mcert - local development cert" \
+    "${mark_node} Install Node & NPM (optional PM2)" \
     "${mark_docker} Install Docker & Compose" \
     "${mark_mysql} Install MySQL" \
     "Install All" \
@@ -109,9 +140,11 @@ while true; do
     *"Install Composer"*) install_composer ;;
     *"Install Caddy"*) install_caddy ;;
     *"Install Nginx & Certbot"*) install_nginx ;;
+  *"mcert - local development cert"*) install_mcert ;;
+  *"Install Node & NPM (optional PM2)"*) install_node ;;
     *"Install Docker & Compose"*) install_docker ;;
     *"Install MySQL"*) install_mysql ;;
-    "Install All") install_php; install_composer; install_caddy; install_nginx; install_docker; install_mysql ;;
+  "Install All") install_php; install_composer; install_caddy; install_nginx; install_mcert; install_node; install_docker; install_mysql ;;
     Back) break ;;
   esac
   gum confirm "Another core service action?" || break

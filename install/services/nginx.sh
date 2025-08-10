@@ -93,12 +93,17 @@ install_fedora_like() {
   # Try snapd first (modern approach)
   if command_exists snap || ${sudo_cmd:-} dnf install -y snapd >/dev/null 2>&1; then
     gum spin --spinner line --title "Installing Certbot via snap" -- bash -c "
-      ${sudo_cmd:-} systemctl enable --now snapd.socket >/dev/null 2>&1 || true
-      ${sudo_cmd:-} snap install core >/dev/null 2>&1 || true
-      ${sudo_cmd:-} snap refresh core >/dev/null 2>&1 || true
-      ${sudo_cmd:-} snap install --classic certbot >/dev/null 2>&1 || true
-      ${sudo_cmd:-} ln -sf /snap/bin/certbot /usr/bin/certbot >/dev/null 2>&1 || true
-    " && certbot_installed=true || true
+      set -euo pipefail
+      ${sudo_cmd:-} systemctl enable --now snapd.socket >/dev/null 2>&1
+      # Ensure /snap exists for classic snaps on Fedora
+      [[ -e /snap ]] || ${sudo_cmd:-} ln -s /var/lib/snapd/snap /snap >/dev/null 2>&1
+      ${sudo_cmd:-} snap install core >/dev/null 2>&1
+      ${sudo_cmd:-} snap refresh core >/dev/null 2>&1
+      ${sudo_cmd:-} snap install --classic certbot >/dev/null 2>&1
+      ${sudo_cmd:-} ln -sf /var/lib/snapd/snap/bin/certbot /usr/bin/certbot >/dev/null 2>&1
+    " || true
+    # Only mark installed if certbot is actually available
+    if command_exists certbot; then certbot_installed=true; fi
   fi
   
   # Fallback to DNF packages
@@ -124,6 +129,9 @@ enable_start_services() {
   # Enable snapd if installed (for snap-based Certbot)
   if systemctl list-unit-files | grep -q '^snapd\.service'; then
     gum spin --spinner line --title "Ensuring snapd is running" -- bash -c "${sudo_cmd:-} systemctl enable --now snapd >/dev/null 2>&1 || true"
+  fi
+  if systemctl list-unit-files | grep -q '^snapd\.socket'; then
+    gum spin --spinner line --title "Ensuring snapd.socket is running" -- bash -c "${sudo_cmd:-} systemctl enable --now snapd.socket >/dev/null 2>&1 || true"
   fi
 }
 

@@ -206,6 +206,85 @@ configure_php_ini() {
   done
 }
 
+# Ensure nginx user/group exists (needed if php-fpm will run as nginx)
+ensure_nginx_user() {
+  if id -u nginx >/dev/null 2>&1; then
+    return 0
+  fi
+  local sudo_cmd nologin_shell
+  sudo_cmd=$(need_sudo || true)
+  nologin_shell="$(command -v nologin || echo /usr/sbin/nologin)"
+  gum spin --spinner line --title "Creating nginx user and group" -- bash -c "
+    ${sudo_cmd:-} getent group nginx >/dev/null || ${sudo_cmd:-} groupadd -r nginx
+    ${sudo_cmd:-} getent passwd nginx >/dev/null || ${sudo_cmd:-} useradd -r -g nginx -s ${nologin_shell} -M nginx
+  " || gum style --foreground 214 "Warning: Failed to create nginx user/group"
+}
+
+# Configure php-fpm pool to run as nginx:nginx
+configure_php_fpm_pool() {
+  ensure_nginx_user
+
+  local candidates=(
+    "/etc/php/${PHP_TARGET_MAJOR}/fpm/pool.d/www.conf"
+    "/etc/php-fpm.d/www.conf"
+  )
+  # Add any versioned Debian/Ubuntu paths that exist
+  for f in /etc/php/*/fpm/pool.d/www.conf; do
+    [[ -f "$f" ]] && candidates+=("$f")
+  done
+
+  local sudo_cmd edited=()
+  sudo_cmd=$(need_sudo || true)
+
+  for conf in "${candidates[@]}"; do
+    [[ -f "$conf" ]] || continue
+
+    # user
+    if grep -qE '^\s*user\s*=' "$conf"; then
+      ${sudo_cmd:-} sed -i -E 's/^[;#]?\s*user\s*=.*/user = nginx/' "$conf"
+    else
+      echo "user = nginx" | ${sudo_cmd:-} tee -a "$conf" >/dev/null
+    fi
+    # group
+    if grep -qE '^\s*group\s*=' "$conf"; then
+      ${sudo_cmd:-} sed -i -E 's/^[;#]?\s*group\s*=.*/group = nginx/' "$conf"
+    else
+      echo "group = nginx" | ${sudo_cmd:-} tee -a "$conf" >/dev/null
+    fi
+
+    edited+=("$conf")
+  done
+
+  if [[ ${#edited[@]} -gt 0 ]]; then
+    gum style --faint "php-fpm pool updated in:"
+    for e in "${edited[@]}"; do gum style --faint "  • $e"; done
+  else
+    gum style --foreground 214 "Warning: Could not find php-fpm www.conf to update"
+  fi
+}
+
+# Find the correct php-fpm service name across distros
+find_php_fpm_service() {
+  local svc
+  for svc in "php${PHP_TARGET_MAJOR}-fpm" "php-fpm" "php-fpm${PHP_TARGET_MAJOR/./}" "php84-php-fpm"; do
+    systemctl list-unit-files | awk '{print $1}' | grep -qx "${svc}.service" && { echo "$svc"; return 0; }
+  done
+  systemctl list-unit-files | awk '{print $1}' | grep -E '^php.*fpm\.service$' -m1 | sed 's/\.service$//' || true
+}
+
+# Enable and reload (or restart) php-fpm after config changes
+enable_reload_php_fpm() {
+  local svc sudo_cmd
+  svc="$(find_php_fpm_service || true)"
+  if [[ -z "$svc" ]]; then
+    gum style --foreground 214 "Warning: php-fpm service not found"
+    return 0
+  fi
+  sudo_cmd=$(need_sudo || true)
+  gum spin --spinner line --title "Enabling ${svc}" -- bash -c "${sudo_cmd:-} systemctl enable ${svc} >/dev/null 2>&1 || true"
+  gum spin --spinner line --title "Reloading ${svc}" -- bash -c "${sudo_cmd:-} systemctl reload ${svc} >/dev/null 2>&1 || ${sudo_cmd:-} systemctl restart ${svc} >/dev/null 2>&1 || true"
+}
+
 install_ubuntu() {
   local sudo_cmd
   sudo_cmd=$(need_sudo || true)
@@ -316,14 +395,14 @@ main() {
     echo
   fi
 
-  # Enable and start php-fpm service where applicable
-  if systemctl list-unit-files | grep -q php-fpm; then
-    gum spin --spinner line --title "Enabling php-fpm" -- bash -c "${sudo_cmd:-} systemctl enable php-fpm >/dev/null 2>&1 || true"
-    gum spin --spinner line --title "Starting php-fpm" -- bash -c "${sudo_cmd:-} systemctl restart php-fpm >/dev/null 2>&1 || true"
-  fi
+  # Configure php-fpm pool to run as nginx
+  configure_php_fpm_pool
+
+  # Enable and reload/restart php-fpm service where applicable
+  enable_reload_php_fpm
 
   gum style --foreground 212 --bold "PHP $(php -v | head -n1 | awk '{print $2}') installed"
-  
+
   # Run health check
   run_php_health_check
 }

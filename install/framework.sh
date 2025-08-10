@@ -24,6 +24,10 @@ has_laravel_nginx() {
   [[ -f "${SCRIPT_DIR}/frameworks/laravel_nginx.sh" ]] && command_exists nginx
 }
 
+has_next_nginx() {
+  [[ -f "${SCRIPT_DIR}/frameworks/nextjs_nginx.sh" ]] && command_exists nginx
+}
+
 launch_script() {
   local script="$1"
   local target="${SCRIPT_DIR}/frameworks/${script}"
@@ -43,11 +47,12 @@ while true; do
   # Dynamic checkmarks
   mark_caddy=$(has_laravel_caddy && echo "[✓]" || echo "[ ]")
   mark_nginx=$(has_laravel_nginx && echo "[✓]" || echo "[!]")
+  mark_next=$(has_next_nginx && echo "[✓]" || echo "[!]")
   
   CHOICE=$(gum choose --header "Framework Installation" \
     "${mark_caddy} Laravel + Caddy" \
     "${mark_nginx} Laravel + Nginx" \
-    "Next.js (placeholder)" \
+    "${mark_next} Next.js + Nginx" \
     "Back") || exit 0
   
   case "$CHOICE" in
@@ -64,9 +69,14 @@ while true; do
       gum style --foreground 45 --bold "Launching Laravel + Nginx installer"
       launch_script "laravel_nginx.sh" || true
       ;;
-    "Next.js (placeholder)")
-      gum spin --spinner pulse --title "(placeholder) Setting up Next.js" -- sleep 2
-      gum style --foreground 82 "Next.js placeholder done."
+    *"Next.js + Nginx"*)
+      if ! command_exists nginx; then
+        gum style --foreground 196 --bold "Nginx is required for Next.js + Nginx installation"
+        gum style --faint "Install Nginx first through Core Services menu"
+        gum confirm "Continue anyway?" || continue
+      fi
+      gum style --foreground 45 --bold "Launching Next.js + Nginx installer"
+      launch_script "nextjs_nginx.sh" || true
       ;;
     "Back")
       break
