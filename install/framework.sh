@@ -28,6 +28,11 @@ has_next_nginx() {
   [[ -f "${SCRIPT_DIR}/frameworks/nextjs_nginx.sh" ]] && command_exists nginx
 }
 
+has_laravel_frankenphp() {
+  # Check if frankenphp_laravel script exists and frankenphp is installed
+  [[ -f "${SCRIPT_DIR}/frameworks/frankenphp_laravel.sh" ]] && command_exists frankenphp
+}
+
 launch_script() {
   local script="$1"
   local target="${SCRIPT_DIR}/frameworks/${script}"
@@ -47,16 +52,23 @@ while true; do
   # Dynamic checkmarks
   mark_caddy=$(has_laravel_caddy && echo "[✓]" || echo "[ ]")
   mark_nginx=$(has_laravel_nginx && echo "[✓]" || echo "[!]")
+  mark_frankenphp=$(has_laravel_frankenphp && echo "[✓]" || echo "[ ]")
   mark_next=$(has_next_nginx && echo "[✓]" || echo "[!]")
-  
+
   CHOICE=$(gum choose --header "Framework Installation" \
     "${mark_caddy} Laravel + Caddy" \
     "${mark_nginx} Laravel + Nginx" \
+    "${mark_frankenphp} Laravel + FrankenPHP (Octane)" \
     "${mark_next} Next.js + Nginx" \
     "Back") || exit 0
   
   case "$CHOICE" in
     *"Laravel + Caddy"*)
+      if ! command_exists caddy; then
+        gum style --foreground 196 --bold "Caddy is required for Laravel + Caddy installation"
+        gum style --faint "Install Caddy first through Core Services menu"
+        gum confirm "Continue anyway?" || continue
+      fi
       gum style --foreground 45 --bold "Launching Laravel + Caddy installer"
       launch_script "caddy_laravel.sh" || true
       ;;
@@ -68,6 +80,15 @@ while true; do
       fi
       gum style --foreground 45 --bold "Launching Laravel + Nginx installer"
       launch_script "laravel_nginx.sh" || true
+      ;;
+    *"Laravel + FrankenPHP"*)
+      if ! command_exists frankenphp; then
+        gum style --foreground 196 --bold "FrankenPHP is required for Laravel + FrankenPHP installation"
+        gum style --faint "Install FrankenPHP first through Core Services menu"
+        gum confirm "Continue anyway?" || continue
+      fi
+      gum style --foreground 45 --bold "Launching Laravel + FrankenPHP installer"
+      launch_script "frankenphp_laravel.sh" || true
       ;;
     *"Next.js + Nginx"*)
       if ! command_exists nginx; then

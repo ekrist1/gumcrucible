@@ -45,6 +45,14 @@ has_mysql() {
   return 1
 }
 
+has_supervisor() {
+  command_exists supervisord && command_exists supervisorctl
+}
+
+has_frankenphp() {
+  command_exists frankenphp
+}
+
 install_php() {
   local php_script="${SCRIPT_DIR}/services/php84.sh"
   if [[ -f "$php_script" ]]; then
@@ -82,7 +90,12 @@ install_docker() {
 }
 
 install_caddy() {
-  gum spin --spinner line --title "(placeholder) Installing Caddy" -- sleep 1
+  local caddy_script="${SCRIPT_DIR}/services/caddy.sh"
+  if [[ -f "$caddy_script" ]]; then
+    bash "$caddy_script"
+  else
+    gum style --foreground 196 "Missing: services/caddy.sh"
+  fi
 }
 
 install_nginx() {
@@ -112,6 +125,24 @@ install_node() {
   fi
 }
 
+install_supervisor() {
+  local supervisor_script="${SCRIPT_DIR}/services/supervisor.sh"
+  if [[ -f "$supervisor_script" ]]; then
+    bash "$supervisor_script"
+  else
+    gum style --foreground 196 "Missing: services/supervisor.sh"
+  fi
+}
+
+install_frankenphp() {
+  local frankenphp_script="${SCRIPT_DIR}/services/frankenphp.sh"
+  if [[ -f "$frankenphp_script" ]]; then
+    bash "$frankenphp_script"
+  else
+    gum style --foreground 196 "Missing: services/frankenphp.sh"
+  fi
+}
+
 while true; do
   clear || true
   # Dynamic checkmarks
@@ -123,16 +154,20 @@ while true; do
   mark_mcert=$(has_mcert && echo "[x]" || echo "[ ]")
   mark_node=$(has_node && echo "[x]" || echo "[ ]")
   mark_mysql=$(has_mysql && echo "[x]" || echo "[ ]")
+  mark_supervisor=$(has_supervisor && echo "[x]" || echo "[ ]")
+  mark_frankenphp=$(has_frankenphp && echo "[x]" || echo "[ ]")
 
   choice=$(gum choose --header "Core Services" \
     "${mark_php} Install PHP 8.4" \
     "${mark_comp} Install Composer" \
     "${mark_caddy} Install Caddy" \
     "${mark_nginx} Install Nginx & Certbot" \
+    "${mark_frankenphp} Install FrankenPHP (Modern PHP Server)" \
     "${mark_mcert} mcert - local development cert" \
     "${mark_node} Install Node & NPM (optional PM2)" \
     "${mark_docker} Install Docker & Compose" \
     "${mark_mysql} Install MySQL" \
+    "${mark_supervisor} Install Supervisor" \
     "Install All" \
     "Back") || exit 0
   case "$choice" in
@@ -140,11 +175,13 @@ while true; do
     *"Install Composer"*) install_composer ;;
     *"Install Caddy"*) install_caddy ;;
     *"Install Nginx & Certbot"*) install_nginx ;;
+    *"Install FrankenPHP"*) install_frankenphp ;;
   *"mcert - local development cert"*) install_mcert ;;
   *"Install Node & NPM (optional PM2)"*) install_node ;;
     *"Install Docker & Compose"*) install_docker ;;
     *"Install MySQL"*) install_mysql ;;
-  "Install All") install_php; install_composer; install_caddy; install_nginx; install_mcert; install_node; install_docker; install_mysql ;;
+    *"Install Supervisor"*) install_supervisor ;;
+  "Install All") install_php; install_composer; install_caddy; install_nginx; install_frankenphp; install_mcert; install_node; install_docker; install_mysql; install_supervisor ;;
     Back) break ;;
   esac
   gum confirm "Another core service action?" || break
