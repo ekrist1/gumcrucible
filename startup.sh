@@ -47,6 +47,8 @@ main_menu() {
   choice=$(gum choose --header "Crucible Startup Menu" \
     "Core services (php, caddy, mysql)" \
   "Framework (Laravel, Next)" \
+  "Deploy Laravel Application" \
+  "Configure Laravel Environment (.env)" \
   "Docker Management" \
     "Exit") || exit 0
 
@@ -58,6 +60,14 @@ main_menu() {
     "Framework (Laravel, Next)")
       gum style --foreground 45 --bold "Launching Framework installer"
       launch_script framework.sh || true
+      ;;
+    "Deploy Laravel Application")
+      gum style --foreground 82 --bold "Launching Laravel Deployment"
+      launch_script operation/deploy_laravel.sh || true
+      ;;
+    "Configure Laravel Environment (.env)")
+      gum style --foreground 214 --bold "Launching Environment Configuration"
+      launch_script operation/configure_env.sh || true
       ;;
     "Docker Management")
       gum style --foreground 39 --bold "Opening Docker Management"
